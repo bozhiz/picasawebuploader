@@ -1,4 +1,5 @@
 #! /usr/bin/python
+# -*- coding: UTF-8 -*-
 #
 # Upload directories of videos and pictures to Picasa Web Albums
 #
@@ -10,6 +11,9 @@
 # Copyright (C) 2011 Jack Palevich, All Rights Reserved
 #
 # Contains code from http://nathanvangheem.com/news/moving-to-picasa-update
+#
+# https://github.com/jackpal/picasawebuploader
+# https://github.com/MicOestergaard/picasawebuploader
 
 import sys
 if sys.version_info < (2,7):
@@ -26,13 +30,19 @@ import gdata
 import gdata.photos.service
 import gdata.media
 import gdata.geo
+import gdata.gauth
 import getpass
+import httplib2
 import os
 import pyexiv2
 import subprocess
 import tempfile
 import time
+import webbrowser
 
+from datetime import datetime, timedelta
+from oauth2client.client import flow_from_clientsecrets
+from oauth2client.file import Storage
 from gdata.photos.service import GPHOTOS_INVALID_ARGUMENT, GPHOTOS_INVALID_CONTENT_TYPE, GooglePhotosException
 
 PICASA_MAX_FREE_IMAGE_DIMENSION = 2048
@@ -95,20 +105,55 @@ def InsertVideo(self, album_or_uri, video, filename_or_handle, content_type='ima
     try:
         return self.Post(video, uri=feed_uri, media_source=mediasource,
             converter=None)
-    except gdata.service.RequestError, e:
+    except gdata.service.RequestError as e:
         raise GooglePhotosException(e.args[0])
 
 gdata.photos.service.PhotosService.InsertVideo = InsertVideo
 
-def login(email, password):
-    gd_client = gdata.photos.service.PhotosService()
-    gd_client.email = email
-    gd_client.password = password
-    gd_client.source = 'palevich-photouploader'
-    gd_client.ProgrammaticLogin()
-    return gd_client
+token_expire = datetime.utcnow()
 
-def protectWebAlbums(gd_client):
+def OAuth2Login():
+    configdir = os.path.expanduser(config_dir)
+    client_secrets = os.path.join(configdir, secret_file)
+    credential_store = os.path.join(configdir, store_file)
+
+    storage = Storage(credential_store)
+    credentials = storage.get()
+    if credentials is None or credentials.invalid:
+        flow = flow_from_clientsecrets(client_secrets, scope=scope, redirect_uri='urn:ietf:wg:oauth:2.0:oob')
+        uri = flow.step1_get_authorize_url()
+        print uri + "\r\n"
+        print "copy the uri to web browser to get the authentication code and enter it\r\n"
+        webbrowser.open(uri)
+        code = raw_input('Enter the authentication code: ').strip()
+        credentials = flow.step2_exchange(code)
+
+    global token_expire
+    token_expire = credentials.token_expiry
+    if ( token_expire - datetime.utcnow()) < timedelta(minutes=5):
+        http = httplib2.Http()
+        http = credentials.authorize(http)
+        credentials.refresh(http)
+        token_expire = credentials.token_expiry
+        print 'refresh token in login'
+
+    print "Token will expire at ", token_expire
+    storage.put(credentials)
+
+    return gdata.photos.service.PhotosService(source=user_agent,
+                                                   email=email,
+                                                   additional_headers={'Authorization' : 'Bearer %s' % credentials.access_token})
+
+def RefreshToken():
+    global token_expire
+    global gd_client
+    
+    if (token_expire - datetime.utcnow()) < timedelta(minutes=5):
+        print 'Refresh token, it will expire in 5 minutes, refreshing...'
+        gd_client = OAuth2Login()
+        #print gd_client
+
+def protectWebAlbums():
     albums = gd_client.GetUserFeed()
     for album in albums.entry:
         # print 'title: %s, number of photos: %s, id: %s summary: %s access: %s\n' % (album.title.text,
@@ -129,7 +174,7 @@ def protectWebAlbums(gd_client):
             except gdata.service.RequestError, e:
                 print "Could not update album: " + str(e)
 
-def getWebAlbums(gd_client):
+def getWebAlbums():
     albums = gd_client.GetUserFeed()
     d = {}
     for album in albums.entry:
@@ -143,26 +188,26 @@ def getWebAlbums(gd_client):
         #print vars(album)
     return d
 
-def findAlbum(gd_client, title):
+def findAlbum(title):
     albums = gd_client.GetUserFeed()
     for album in albums.entry:
         if album.title.text == title:
             return album
     return None
 
-def createAlbum(gd_client, title):
+def createAlbum(title):
     print "Creating album " + title
     # public, private, protected. private == "anyone with link"
     album = gd_client.InsertAlbum(title=title, summary='', access='private')
     return album
 
-def findOrCreateAlbum(gd_client, title):
+def findOrCreateAlbum(title):
     delay = 1
     while True:
         try:
-            album = findAlbum(gd_client, title)
+            album = findAlbum(title)
             if not album:
-                album = createAlbum(gd_client, title)
+                album = createAlbum(title)
             return album
         except gdata.photos.service.GooglePhotosException, e:
             print "caught exception " + str(e)
@@ -170,18 +215,18 @@ def findOrCreateAlbum(gd_client, title):
             time.sleep(delay)
             delay = delay * 2
 
-def postPhoto(gd_client, album, filename):
+def postPhoto(album, filename):
     album_url = '/data/feed/api/user/%s/albumid/%s' % (gd_client.email, album.gphoto_id.text)
     photo = gd_client.InsertPhotoSimple(album_url, 'New Photo',
             'Uploaded using the API', filename, content_type='image/jpeg')
     return photo
 
-def postPhotoToAlbum(gd_client, photo, album):
-    album = findOrCreateAlbum(gd_client, args.album)
-    photo = postPhoto(gd_client, album, args.source)
+def postPhotoToAlbum(photo, album):
+    album = findOrCreateAlbum(args.album)
+    photo = postPhoto(album, args.source)
     return photo
 
-def getWebPhotosForAlbum(gd_client, album):
+def getWebPhotosForAlbum(album):
     photos = gd_client.GetFeed(
             '/data/feed/api/user/%s/albumid/%s?kind=photo' % (
             gd_client.email, album.gphoto_id.text))
@@ -286,12 +331,12 @@ def compareLocalToWebDir(localAlbum, webPhotoDict):
             webOnly.append(i)
     return {'localOnly' : localOnly, 'both' : both, 'webOnly' : webOnly}
 
-def syncDirs(gd_client, dirs, local, web, no_resize):
+def syncDirs(dirs, local, web):
     for dir in dirs:
-        syncDir(gd_client, dir, local[dir], web[dir], no_resize)
+        syncDir(dir, local[dir], web[dir])
 
-def syncDir(gd_client, dir, localAlbum, webAlbum, no_resize):
-    webPhotos = getWebPhotosForAlbum(gd_client, webAlbum)
+def syncDir(dir, localAlbum, webAlbum):
+    webPhotos = getWebPhotosForAlbum(webAlbum)
     webPhotoDict = {}
     for photo in webPhotos:
         title = photo.title.text
@@ -303,17 +348,17 @@ def syncDir(gd_client, dir, localAlbum, webAlbum, no_resize):
     localOnly = report['localOnly']
     for f in localOnly:
         localPath = os.path.join(localAlbum['path'], f)
-        upload(gd_client, localPath, webAlbum, f, no_resize)
+        upload(localPath, webAlbum, f)
 
-def uploadDirs(gd_client, dirs, local, no_resize):
+def uploadDirs(dirs, local):
     for dir in dirs:
-        uploadDir(gd_client, dir, local[dir], no_resize)
+        uploadDir(dir, local[dir])
 
-def uploadDir(gd_client, dir, localAlbum, no_resize):
-    webAlbum = findOrCreateAlbum(gd_client, dir)
+def uploadDir(dir, localAlbum):
+    webAlbum = findOrCreateAlbum(dir)
     for f in localAlbum['files']:
         localPath = os.path.join(localAlbum['path'], f)
-        upload(gd_client, localPath, webAlbum, f, no_resize)
+        upload(localPath, webAlbum, f)
 
 # Global used for a temp directory
 gTempDir = ''
@@ -378,8 +423,9 @@ def shrinkIfNeededByPIL(path, maxDimension):
         return imagePath
     return path
 
-def upload(gd_client, localPath, album, fileName, no_resize):
-    print "Uploading " + localPath
+def upload(localPath, album, fileName):
+    global no_resize
+    global upload_movie
     contentType = getContentType(fileName)
 
     if contentType.startswith('image/'):
@@ -391,6 +437,9 @@ def upload(gd_client, localPath, album, fileName, no_resize):
         isImage = True
         picasa_photo = gdata.photos.PhotoEntry()
     else:
+        if not upload_movie:
+            return
+
         size = os.path.getsize(localPath)
 
         # tested by cpbotha on 2013-05-24
@@ -401,11 +450,18 @@ def upload(gd_client, localPath, album, fileName, no_resize):
         imagePath = localPath
         isImage = False
         picasa_photo = VideoEntry()
+    
+    
+    print "Uploading " + localPath
+
     picasa_photo.title = atom.Title(text=fileName)
     picasa_photo.summary = atom.Summary(text='', summary_type='text')
     delay = 1
+
     while True:
         try:
+            RefreshToken()
+            
             if isImage:
                 gd_client.InsertPhoto(album, picasa_photo, imagePath, content_type=contentType)
             else:
@@ -422,34 +478,43 @@ def upload(gd_client, localPath, album, fileName, no_resize):
         os.remove(imagePath)
 
 if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Upload pictures to picasa web albums / Google+.')
+    parser = argparse.ArgumentParser(description='Upload pictures/videos to picasa web albums / Google+.')
     parser.add_argument('--email', help='the google account email to use (example@gmail.com)', required=True)
-    parser.add_argument('--password', help='the password (you will be promted if this is omitted)', required=False)
     parser.add_argument('--source', help='the directory to upload', required=True)
-    parser.add_argument(
-          '--no-resize',
-          help="Do not resize images, i.e., upload photos with original size.",
-          action='store_true')
-
+    parser.add_argument('--no_resize', help="Do not resize images, i.e., upload photos with original size.", action='store_true')
+    parser.add_argument('--video', help="upload videos, i.e., upload videos.", action='store_true')
+    
     args = parser.parse_args()
+
+    email = args.email
+    source = args.source
 
     if args.no_resize:
         print "*** Images will be uploaded at original size."
-
     else:
         print "*** Images will be resized to 2048 pixels."
+    no_resize = args.no_resize
 
-    email = args.email
-    password = None
-    if 'password' in args and args.password is not None:
-        password = args.password
-    else:
-        password = getpass.getpass("Enter password for " + email + ": ")
+    if args.video:
+        print "*** upload videos. "
+    upload_movie = args.video
 
-    gd_client = login(email, password)
-    # protectWebAlbums(gd_client)
-    webAlbums = getWebAlbums(gd_client)
+    config_dir = '~/.config/picasawebuploader'
+    secret_file = 'client_secrets.json'
+    store_file = 'credentials.dat'
+    scope='https://picasaweb.google.com/data/'
+    user_agent='PicasaAlbumsSync'
+
+    # options for oauth2 login
+    gd_client = OAuth2Login()
+    
+    # protectWebAlbums()
+    webAlbums = getWebAlbums()
     localAlbums = toBaseName(findMedia(args.source))
     albumDiff = compareLocalToWeb(localAlbums, webAlbums)
-    syncDirs(gd_client, albumDiff['both'], localAlbums, webAlbums, args.no_resize)
-    uploadDirs(gd_client, albumDiff['localOnly'], localAlbums, args.no_resize)
+    #print ('both: %s' % albumDiff['both'])
+    #print ('localOnly: %s' % albumDiff['localOnly'])
+    #print ('webOnly: %s' % albumDiff['webOnly'])
+
+    syncDirs(albumDiff['both'], localAlbums, webAlbums)
+    uploadDirs(albumDiff['localOnly'], localAlbums)
