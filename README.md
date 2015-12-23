@@ -8,8 +8,6 @@ A script that uploads photos to Google+ / Picasa Web Albums
 + restartable
 + Creates the albums as "private" aka "limited"
 + Automatically retries when Google data service errors out
-+ Google OAuth 2.0 login
-+ Automatically update the secret data of Google OAuth 2.0
 
 
 Attention: This script is obsolete for Windows and Mac
@@ -36,6 +34,16 @@ Installation
   + pyexiv2 module for writing correct EXIF data
 
 
+Local Directory
+--------------
++ Each lowest-level directory will be created as album, the album name is the folder name, don't include path
++ It will recursively lookup all directories under the "source"
++ Don't append the "/" after the "source"
++ Quota per albums, only 2000 pictures per albums could be upload.
+  + When the to be uploaded directory contain more than 2000 pictures, will warning and exit
+  + You should split the big directory to more small directories. 
+
+
 Authentication
 --------------
 You need to use OAuth2 for authentication. Here is how to set it up ahead.
@@ -48,7 +56,7 @@ You need to use OAuth2 for authentication. Here is how to set it up ahead.
 + Create empty $HOME/.config/picasawebuploader/credentials.dat 
   + You can change the location and name in main.py
   + It will be filled by next step in first time
-  + It will be updated when it is expired or will be expired
+  + It will be updated automatically if it expired or will expire in 5 minutes
 + The first time you run the application you will be asked to authorize your application through your web browser. 
   + If your web brower can't open correctly, like respbian on raspberry pi, you could copy the printed url to Windows PC web browser to open it.
   + Once you do this you will get a code which you have to copy and paste into the application.
@@ -60,22 +68,10 @@ To Do
 + Use multiple threads for uploading.
 + Deal with duplicate picture and folder names, both on local and web collections.
   + Currently we just throw an exception when we detect duplicate names.
-+ Deal with 'Error: 17 REJECTED_USER_LIMIT' errors.
-+ Quota per albums, only 2000 pictures per albums could be upload.
-  + When the to be uploaded directory contain more than 2000 pictures, will warning and skip.
-  + You should split the directory to small.
 
 
 Known Problems
 --------------
-Picasa Web Albums appears to have an undocumented upload quota system that
-limits uploads to a certain number of bytes per month.
-
-Do a web search for REJECTED_USER_LIMIT to see the various discussions about
-this. From reading the web forums it appears that the upload quota is reset
-occasionally (possibly monthly). If you start getting REJECTED_USER_LIMIT
-errors when you run this script you may have to wait a month to upload new
-pictures.
-
-Some people have reported that paying for yearly web storage will remove the
-upload quota.
++ Quota limitation on per album
+  + Only 2000 photos could be added per album
+  + Split big directory to more small directories

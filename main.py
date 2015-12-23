@@ -47,6 +47,8 @@ from gdata.photos.service import GPHOTOS_INVALID_ARGUMENT, GPHOTOS_INVALID_CONTE
 
 PICASA_MAX_FREE_IMAGE_DIMENSION = 2048
 PICASA_MAX_VIDEO_SIZE_BYTES = 104857600
+PICASA_MAX_PICTURES_PER_ALBUM = 2000
+PICASA_MAX_RET_ENTRY = 1000
 
 try:
     from PIL import Image
@@ -185,7 +187,7 @@ def getWebAlbums():
           d[title] = album
         # print 'title: %s, number of photos: %s, id: %s' % (album.title.text,
         #    album.numphotos.text, album.gphoto_id.text)
-        #print vars(album)
+        # print vars(album)
     return d
 
 def findAlbum(title):
@@ -227,10 +229,29 @@ def postPhotoToAlbum(photo, album):
     return photo
 
 def getWebPhotosForAlbum(album):
-    photos = gd_client.GetFeed(
-            '/data/feed/api/user/%s/albumid/%s?kind=photo' % (
-            gd_client.email, album.gphoto_id.text))
-    return photos.entry
+    total_ret = 1
+    total_len = int(album.numphotos.text)
+    p = []
+    while total_ret < total_len:
+        if total_len - total_ret - 1 > PICASA_MAX_RET_ENTRY:
+            end_ret = total_ret + PICASA_MAX_RET_ENTRY
+        else:
+            end_ret = total_len + 1
+            
+        photos = gd_client.GetFeed(
+                '/data/feed/api/user/%s/albumid/%s?kind=photo&start-index=%d&max-results=%d' % (
+                gd_client.email, album.gphoto_id.text, total_ret, end_ret))
+        
+        total_ret += PICASA_MAX_RET_ENTRY
+        p += photos.entry
+
+    if total_len != len(p):
+        print ('Only %d photos retrieved from album %s, total %d' % 
+            (len(p), album.title.text, total_len))
+    # else:
+    #     print ('All %d photos retrieved in album %s' % (total_len, album.title.text))
+
+    return p
 
 allExtensions = {}
 
@@ -272,8 +293,14 @@ def visit(arg, dirname, names):
     mediaFiles = [name for name in names if not name.startswith('.') and isMediaFilename(name) and
         os.path.isfile(os.path.join(dirname, name))]
     count = len(mediaFiles)
-    if count > 0:
+    if count <= 0:
+        print ('No file in directory %s' % dirname)
+    elif count <= PICASA_MAX_PICTURES_PER_ALBUM:
         arg[dirname] = {'files': sorted(mediaFiles)}
+    else:
+        print ('The files(count %d) in directory %s is larger than %d, please split the directory' % 
+            (count, dirname, PICASA_MAX_PICTURES_PER_ALBUM))
+        exit()
 
 def findMedia(source):
     hash = {}
@@ -328,6 +355,7 @@ def compareLocalToWebDir(localAlbum, webPhotoDict):
             localOnly.append(i)
     for i in webPhotoDict:
         if i not in localAlbum:
+            print ('Web Only %s' % i)
             webOnly.append(i)
     return {'localOnly' : localOnly, 'both' : both, 'webOnly' : webOnly}
 
@@ -338,12 +366,22 @@ def syncDirs(dirs, local, web):
 def syncDir(dir, localAlbum, webAlbum):
     webPhotos = getWebPhotosForAlbum(webAlbum)
     webPhotoDict = {}
+    duplicated = []
     for photo in webPhotos:
         title = photo.title.text
         if title in webPhotoDict:
             print "duplicate web photo: " + webAlbum.title.text + " " + title
+            duplicated.append(photo)
         else:
             webPhotoDict[title] = photo
+    
+    # delete duplicated photos
+    for photo in duplicated:
+        title = photo.title.text
+        print "Delete duplicate web photo: " + webAlbum.title.text + " " + title
+        gd_client.Delete(photo)
+    
+    # upload local only photos
     report = compareLocalToWebDir(localAlbum['files'], webPhotoDict)
     localOnly = report['localOnly']
     for f in localOnly:
@@ -382,9 +420,13 @@ def imageMaxDimension(path):
     return max(w,h)
 
 def imageMaxDimensionByPIL(path):
-  img = Image.open(path)
-  (w,h) = img.size
-  return max(w,h)
+    try:
+        img = Image.open(path)
+    except IOError:
+        print ('The file %s can\'t be identified as image' % path)
+        exit()
+    (w,h) = img.size
+    return max(w,h)
 
 def shrinkIfNeeded(path, maxDimension):
     if (HAS_PIL_IMAGE):
@@ -510,11 +552,11 @@ if __name__ == '__main__':
     
     # protectWebAlbums()
     webAlbums = getWebAlbums()
-    localAlbums = toBaseName(findMedia(args.source))
+    localAlbums = toBaseName(findMedia(source))
     albumDiff = compareLocalToWeb(localAlbums, webAlbums)
-    #print ('both: %s' % albumDiff['both'])
-    #print ('localOnly: %s' % albumDiff['localOnly'])
-    #print ('webOnly: %s' % albumDiff['webOnly'])
+    # print ('both: %s' % albumDiff['both'])
+    # print ('localOnly: %s' % albumDiff['localOnly'])
+    # print ('webOnly: %s' % albumDiff['webOnly'])
 
     syncDirs(albumDiff['both'], localAlbums, webAlbums)
     uploadDirs(albumDiff['localOnly'], localAlbums)
