@@ -5,7 +5,7 @@ A script that uploads photos to Google+ / Picasa Web Albums
 
 + Resizes large images to be less than the free limit (2048 x 2048)
 + Uploads all directories under a given directory
-+ restartable
++ Restartable
 + Creates the albums as "private" aka "limited"
 + Automatically retries when Google data service errors out
 
@@ -28,8 +28,8 @@ Installation
   + Google Data APIs http://code.google.com/apis/gdata/
     + gdata-2.0.16 for Python
   + Google OAuth2 APIs https://github.com/google/oauth2client.git
-  + The PIL library for Python or BSD "sips" image processing program.
-	+ PIL is available on most UNIX like systems.
+  + The Pillow library for Python or BSD "sips" image processing program.
+	+ Pillow is available on most UNIX like systems.
     + "sips" comes pre-installed on OSX.
   + pyexiv2 module for writing correct EXIF data
 
@@ -38,7 +38,6 @@ Local Directory
 --------------
 + Each lowest-level directory will be created as album, the album name is the folder name, don't include path
 + It will recursively lookup all directories under the "source"
-+ Don't append the "/" after the "source"
 + Quota per albums, only 2000 pictures per albums could be upload.
   + When the to be uploaded directory contain more than 2000 pictures, will warning and exit
   + You should split the big directory to more small directories. 
@@ -68,10 +67,13 @@ To Do
 + Use multiple threads for uploading.
 + Deal with duplicate picture and folder names, both on local and web collections.
   + Currently we just throw an exception when we detect duplicate names.
+# Sync the photo data time
+  + Un-resize photo will changed to the time which created on cloud, not the one in local
 
 
 Known Problems
 --------------
 + Quota limitation on per album
+  + Got exception (403, 'Forbidden', 'Photo limit reached.')
   + Only 2000 photos could be added per album
   + Split big directory to more small directories

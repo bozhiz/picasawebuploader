@@ -229,27 +229,28 @@ def postPhotoToAlbum(photo, album):
     return photo
 
 def getWebPhotosForAlbum(album):
-    total_ret = 1
-    total_len = int(album.numphotos.text)
+    total = int(album.numphotos.text)
+    ret = 0
+    start = 1
     p = []
-    while total_ret < total_len:
-        if total_len - total_ret - 1 > PICASA_MAX_RET_ENTRY:
-            end_ret = total_ret + PICASA_MAX_RET_ENTRY
+    while start <= total:
+        if total - start + 1 > PICASA_MAX_RET_ENTRY:
+            ret = PICASA_MAX_RET_ENTRY
         else:
-            end_ret = total_len + 1
+            ret = total - start + 1
             
         photos = gd_client.GetFeed(
                 '/data/feed/api/user/%s/albumid/%s?kind=photo&start-index=%d&max-results=%d' % (
-                gd_client.email, album.gphoto_id.text, total_ret, end_ret))
+                gd_client.email, album.gphoto_id.text, start, ret))
         
-        total_ret += PICASA_MAX_RET_ENTRY
+        start += ret
         p += photos.entry
 
-    if total_len != len(p):
+    if total != len(p):
         print ('Only %d photos retrieved from album %s, total %d' % 
-            (len(p), album.title.text, total_len))
+            (len(p), album.title.text, total))
     # else:
-    #     print ('All %d photos retrieved in album %s' % (total_len, album.title.text))
+    #     print ('All %d photos retrieved in album %s' % (total, album.title.text))
 
     return p
 
@@ -361,6 +362,7 @@ def compareLocalToWebDir(localAlbum, webPhotoDict):
 
 def syncDirs(dirs, local, web):
     for dir in dirs:
+        print ('Sync dir/album %s' % web[dir].title.text)
         syncDir(dir, local[dir], web[dir])
 
 def syncDir(dir, localAlbum, webAlbum):
@@ -390,6 +392,7 @@ def syncDir(dir, localAlbum, webAlbum):
 
 def uploadDirs(dirs, local):
     for dir in dirs:
+        print ('Upload dir %s' % local[dir]['path'])
         uploadDir(dir, local[dir])
 
 def uploadDir(dir, localAlbum):
@@ -428,27 +431,27 @@ def imageMaxDimensionByPIL(path):
     (w,h) = img.size
     return max(w,h)
 
-def shrinkIfNeeded(path, maxDimension):
+def shrinkIfNeeded(path):
     if (HAS_PIL_IMAGE):
-        return shrinkIfNeededByPIL(path, maxDimension)
-    if imageMaxDimension(path) > maxDimension:
+        return shrinkIfNeededByPIL(path)
+    if imageMaxDimension(path) > PICASA_MAX_FREE_IMAGE_DIMENSION:
         print "Shrinking " + path
         imagePath = getTempPath(path)
         subprocess.check_call(['sips', '--resampleHeightWidthMax',
-            str(maxDimension), path, '--out', imagePath])
+            str(PICASA_MAX_FREE_IMAGE_DIMENSION), path, '--out', imagePath])
         return imagePath
     return path
 
-def shrinkIfNeededByPIL(path, maxDimension):
-    if imageMaxDimensionByPIL(path) > maxDimension:
+def shrinkIfNeededByPIL(path):
+    if imageMaxDimensionByPIL(path) > PICASA_MAX_FREE_IMAGE_DIMENSION:
         print "Shrinking " + path
         imagePath = getTempPath(path)
         img = Image.open(path)
         (w,h) = img.size
         if (w>h):
-            img2 = img.resize((maxDimension, (h*maxDimension)/w), Image.ANTIALIAS)
+            img2 = img.resize((PICASA_MAX_FREE_IMAGE_DIMENSION, (h*PICASA_MAX_FREE_IMAGE_DIMENSION)/w), Image.ANTIALIAS)
         else:
-            img2 = img.resize(((w*maxDimension)/h, maxDimension), Image.ANTIALIAS)
+            img2 = img.resize(((w*PICASA_MAX_FREE_IMAGE_DIMENSION)/h, PICASA_MAX_FREE_IMAGE_DIMENSION), Image.ANTIALIAS)
         img2.save(imagePath, 'JPEG', quality=99)
 
         # now copy EXIF data from original to new
@@ -474,7 +477,7 @@ def upload(localPath, album, fileName):
         if no_resize:
             imagePath = localPath
         else:
-            imagePath = shrinkIfNeeded(localPath, PICASA_MAX_FREE_IMAGE_DIMENSION)
+            imagePath = shrinkIfNeeded(localPath)
 
         isImage = True
         picasa_photo = gdata.photos.PhotoEntry()
@@ -529,7 +532,11 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     email = args.email
+    
     source = args.source
+    if not os.path.exists(source):
+        print ('Source %s is not exist' % (source))
+        exit()
 
     if args.no_resize:
         print "*** Images will be uploaded at original size."
